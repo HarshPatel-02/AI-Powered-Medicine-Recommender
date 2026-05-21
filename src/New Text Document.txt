@@ -1,0 +1,221 @@
+main.py
+
+import os
+from fastapi import FastAPI, Form
+from fastapi.responses import HTMLResponse, JSONResponse
+import pandas as pd
+import traceback
+
+from src.data_loader import load_data
+from src.data_preprocessing import create_combined_text
+from src.vectorizer import create_vectorizer
+from src.recommender import get_recommandation
+from src.gemini_helper import get_gemini_response
+
+app = FastAPI(title="Medicine Recommender")
+
+df = None
+vectorizer = None
+tfidf_matrix = None
+
+@app.on_event("startup")
+async def startup_event():
+    global df, vectorizer, tfidf_matrix
+    try:
+        df_raw = load_data()
+        df = create_combined_text(df_raw)
+        vectorizer = create_vectorizer(df)
+        tfidf_matrix = vectorizer.transform(df['combined_text'])
+        print(f"✅ Loaded {len(df)} medicines successfully")
+    except Exception as e:
+        print(f"❌ Data load failed: {e}")
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    html_path = os.path.join(os.path.dirname(__file__), "app", "templates", "index.html")
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except:
+        return HTMLResponse("<h1>index.html not found</h1>")
+
+@app.post("/recommend")
+async def recommend(symptoms: str = Form(...)):
+    try:
+        top_df, source, max_sim = get_recommandation(symptoms, vectorizer, tfidf_matrix, df)
+        
+        medicines = []
+        ai_response = ""
+
+        if top_df is not None and not top_df.empty:
+            source = 'database'
+            for _, row in top_df.iterrows():
+                medicines.append({
+                    "name": str(row.get('NAME', '')),
+                    "contains": str(row.get('CONTAINS', '')),
+                    "uses": str(row.get('USES', '')),
+                    "benefits": str(row.get('BENEFITS', '')),
+                    "side_effects": str(row.get('SIDE_EFFECT', ''))
+                })
+            print(f"✅ Database match found | Similarity: {max_sim:.3f}")
+        else:
+            source = 'general'
+            ai_response = "No close match found in our medicine database for these symptoms."
+            print(f"⚠️ No good match | Max Similarity: {max_sim:.3f}")
+
+        return {
+            "symptoms": symptoms,
+            "source": source,
+            "similarity": round(float(max_sim), 3),
+            "medicines": medicines,
+            "ai_response": ai_response
+        }
+
+    except Exception as e:
+        print("🔥 ERROR:", traceback.format_exc())
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "records": len(df) if df is not None else 0}
+
+.env file
+
+    CSV_PATH=data/Clean_Medicine_Details.csv
+GEMINI_API_KEY ="-rAg8"
+SIMILARITY_THRESHOLD=0.10  # Bahut important - isse aur kam kiya
+TOP_N=5
+
+data_loader.py
+import os
+import sys
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+from src.config import CSV_PATH
+import pandas as pd
+
+def load_data(path=None):
+    if path is None:
+        path = CSV_PATH
+        
+    if os.path.exists(path):
+        df = pd.read_csv(path)
+        print("Data loaded successfully!")
+        return df
+    else:
+        print(f"Error: File not found at {path}")
+
+if __name__ == "__main__":
+    load_data()
+
+    data_preprocessing.py
+    import pandas as pd
+
+def create_combined_text(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df['combined_text'] = (
+        df.get('NAME', '').fillna('') + " " +
+        df.get('CONTAINS', '').fillna('') + " " +
+        df.get('USES', '').fillna('') + " " +
+        df.get('BENEFITS', '').fillna('') + " " +
+        df.get('SIDE_EFFECT', '').fillna('')
+    ).str.lower()
+    return df
+
+
+    from sklearn.metrics.pairwise import cosine_similarity
+recommender.py
+
+import pandas as pd
+
+from src.config import SIMILARITY_THRESHOLD, TOP_N
+
+def get_recommandation(query: str, vectorizer, tfidf_matrix, df: pd.DataFrame):
+    query_vector = vectorizer.transform([query.lower()])
+    sim_scores = cosine_similarity(query_vector, tfidf_matrix).flatten()
+    
+    max_sim = float(sim_scores.max())
+    
+    print(f"Debug - Query: '{query}' | Max Similarity: {max_sim:.4f}")  # ← Yeh line add karo debugging ke liye
+    
+    if max_sim >= SIMILARITY_THRESHOLD:
+        top_indices = sim_scores.argsort()[-10:][::-1]   # Top 10 mein se best
+        top_df = df.iloc[top_indices].copy().head(TOP_N)
+        source = 'database'
+    else:
+        top_df = None
+        source = 'general'
+    
+    return top_df, source, max_sim
+
+    vectorizer.py
+    import pickle 
+import os
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+from src.config import VECTORIZER_PATH
+
+
+def create_vectorizer(df,force_recreate=False):
+    if os.path.exists(VECTORIZER_PATH) and not force_recreate:
+        with open(VECTORIZER_PATH,'rb')as f:
+            vectorizer = pickle.load(f)
+            print("TF-IDF Vectorizer loaded from file successfully")
+    else:
+        print("Creating new TF-IDF Vectorizer")
+        vectorizer = TfidfVectorizer(
+           stop_words='english',
+            ngram_range=(1,2)
+        )
+        vectorizer.fit(df['combined_text'])
+
+        #save vectorizer to file
+        os.makedirs(os.path.dirname(VECTORIZER_PATH),exist_ok=True)
+        with open(VECTORIZER_PATH,'wb') as f:
+            pickle.dump(vectorizer,f)
+        print("TF-IDF Vectorizer trained and saved to file successfully")
+
+    return vectorizer
+
+
+gemini_helper.py
+import google.generativeai as genai
+from src.config import API_KEY, LANGUAGE_INSTRUCTIONS, LANGUAGE
+
+if API_KEY:
+    genai.configure(api_key=API_KEY)
+    model = genai.GenerativeModel('gemini-2.5-flash')
+else:
+    model = None
+
+def get_gemini_response(symptoms: str, data_str: str, source: str):
+    instruction = LANGUAGE_INSTRUCTIONS.get(LANGUAGE, LANGUAGE_INSTRUCTIONS["English"])
+
+    prompt = f"""
+{instruction}
+
+User symptoms: {symptoms}
+Source: {source}
+{data_str if data_str else "No close match found in database."}
+
+Recommend the best medicine(s) professionally.
+For each medicine give:
+- Medicine Name
+- Why it is suitable
+- Possible Side Effects
+- Precautions / Note
+
+At the end, clearly write: "This is a general recommendation and not a substitute for professional medical advice. Always consult with a healthcare provider for personalized medical advice."
+"""
+
+    if not model:
+        return "⚠️ Gemini API key not configured. Please set GEMINI_API_KEY in .env"
+
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Error generating AI response: {str(e)}"

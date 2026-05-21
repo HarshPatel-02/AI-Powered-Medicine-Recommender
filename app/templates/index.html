@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8" />
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0" />
+
+    <title>
+        MediRec - AI Medicine Recommender
+    </title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" />
+
+    <style>
+
+        body {
+            background:
+                linear-gradient(
+                    135deg,
+                    #f0f9ff 0%,
+                    #e0f2fe 100%
+                );
+        }
+
+        textarea {
+            resize: none;
+        }
+
+        .card {
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+
+            box-shadow:
+                0 20px 25px -5px rgb(0 0 0 / 0.1),
+                0 8px 10px -6px rgb(0 0 0 / 0.1);
+        }
+
+        .result-card {
+            animation: fadeIn 0.5s ease forwards;
+        }
+
+        @keyframes fadeIn {
+
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+    </style>
+
+</head>
+
+<body class="min-h-screen font-sans">
+
+    <div class="max-w-5xl mx-auto p-6">
+
+        <!-- HEADER -->
+        <div class="text-center mb-10">
+
+            <div class="flex items-center justify-center gap-3 mb-4">
+
+                <div
+                    class="w-16 h-16 bg-blue-600 text-white rounded-2xl flex items-center justify-center text-3xl shadow-lg">
+
+                    💊
+
+                </div>
+
+                <h1 class="text-5xl font-bold text-gray-800">
+                    MediRec
+                </h1>
+
+            </div>
+
+            <p class="text-gray-600 text-lg">
+                AI-Powered Medicine Recommendation System
+            </p>
+
+        </div>
+
+        <!-- INPUT -->
+        <div class="bg-white rounded-3xl shadow-xl p-8 card">
+
+            <h2
+                class="text-2xl font-semibold text-gray-800 mb-6 flex items-center gap-2">
+
+                <i class="fas fa-notes-medical text-blue-600"></i>
+
+                Describe Your Symptoms
+
+            </h2>
+
+            <textarea
+                id="symptoms"
+                rows="5"
+                class="w-full px-6 py-5 border border-gray-300 rounded-2xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-lg"
+                placeholder="e.g. fever, cough, headache, body pain..."></textarea>
+
+            <button
+                onclick="getRecommendations()"
+                id="submitBtn"
+                class="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-lg py-5 px-8 rounded-2xl transition-all duration-200 flex items-center justify-center gap-3 shadow-lg">
+
+                <i class="fas fa-search"></i>
+
+                Get AI Recommendations
+
+            </button>
+
+        </div>
+
+        <!-- RESULTS -->
+        <div
+            id="results"
+            class="mt-10"></div>
+
+    </div>
+
+    <script>
+
+        async function getRecommendations() {
+
+            const symptoms =
+                document
+                .getElementById("symptoms")
+                .value
+                .trim();
+
+            const resultsDiv =
+                document
+                .getElementById("results");
+
+            const btn =
+                document
+                .getElementById("submitBtn");
+
+            if (!symptoms) {
+
+                alert(
+                    "Please enter symptoms."
+                );
+
+                return;
+            }
+
+            // LOADING BUTTON
+            const originalText =
+                btn.innerHTML;
+
+            btn.disabled = true;
+
+            btn.innerHTML = `
+                <i class="fas fa-spinner fa-spin"></i>
+                Analyzing Symptoms...
+            `;
+
+            try {
+
+                // FORM DATA
+                const formData =
+                    new FormData();
+
+                formData.append(
+                    "symptoms",
+                    symptoms
+                );
+
+                // API CALL
+                const response =
+                    await fetch(
+                        "http://127.0.0.1:8000/recommend",
+                        {
+                            method: "POST",
+                            body: formData
+                        }
+                    );
+
+                const data =
+                    await response.json();
+
+                console.log(data);
+
+                if (!response.ok) {
+
+                    throw new Error(
+                        data.error ||
+                        "Server Error"
+                    );
+                }
+
+                // =========================================
+                // MAIN RESULT CARD
+                // =========================================
+
+                let html = `
+
+                    <div class="result-card bg-white rounded-3xl shadow-xl p-8">
+
+                        <!-- HEADER -->
+                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+
+                            <h2 class="text-2xl font-bold text-gray-800">
+
+                                Results for:
+
+                                <span class="text-blue-600">
+                                    "${symptoms}"
+                                </span>
+
+                            </h2>
+
+                            <span
+                                class="px-4 py-2 rounded-full text-sm font-semibold
+                                ${data.source === 'database'
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-purple-100 text-purple-700'}">
+
+                                ${data.source === 'database'
+                                    ? '📊 Database Match'
+                                    : '🌐 OpenRouter AI'}
+
+                            </span>
+
+                        </div>
+
+                        <!-- SIMILARITY -->
+                        <div class="mb-8">
+
+                            <p class="text-sm text-gray-500 mb-2">
+                                Similarity Score
+                            </p>
+
+                            <div class="text-4xl font-bold text-blue-600">
+
+                                ${(data.similarity * 100).toFixed(1)}%
+
+                            </div>
+
+                        </div>
+
+                `;
+
+                // =========================================
+                // DATABASE RESULT
+                // =========================================
+
+                if (
+                    data.source === "database"
+                ) {
+
+                    html += `
+
+                        <hr class="my-8">
+
+                        <h3 class="text-2xl font-bold text-gray-800 mb-6">
+
+                            💊 Recommended Medicines
+
+                        </h3>
+
+                        <div class="space-y-6">
+
+                            ${data.medicines.map((med) => `
+
+                                <div
+                                    class="border border-gray-200 rounded-2xl p-6 bg-gray-50 hover:shadow-lg transition">
+
+                                    <!-- NAME -->
+                                    <h4 class="text-2xl font-bold text-blue-700 mb-2">
+
+                                        ${med.name}
+
+                                    </h4>
+
+                                    <!-- CONTAINS -->
+                                    <p class="text-gray-700 mb-4">
+
+                                        <span class="font-semibold">
+                                            Contains:
+                                        </span>
+
+                                        ${med.contains}
+
+                                    </p>
+
+                                    <!-- USES -->
+                                    <div class="mb-4">
+
+                                        <h5 class="font-semibold text-gray-800 mb-1">
+                                            Uses
+                                        </h5>
+
+                                        <p class="text-gray-600 whitespace-pre-line">
+
+                                            ${med.uses}
+
+                                        </p>
+
+                                    </div>
+
+                                    <!-- BENEFITS -->
+                                    <div class="mb-4">
+
+                                        <h5 class="font-semibold text-gray-800 mb-1">
+                                            Benefits
+                                        </h5>
+
+                                        <p class="text-gray-600 whitespace-pre-line">
+
+                                            ${med.benefits}
+
+                                        </p>
+
+                                    </div>
+
+                                    <!-- SIDE EFFECTS -->
+                                    <div>
+
+                                        <h5 class="font-semibold text-red-600 mb-1">
+                                            Side Effects
+                                        </h5>
+
+                                        <p class="text-gray-600 whitespace-pre-line">
+
+                                            ${med.side_effects}
+
+                                        </p>
+
+                                    </div>
+
+                                </div>
+
+                            `).join("")}
+
+                        </div>
+                    `;
+                }
+
+                // =========================================
+                // OPENROUTER AI RESULT
+                // =========================================
+
+                else {
+
+                    const ai =
+                        data.ai_response;
+
+                    html += `
+
+                        <hr class="my-8">
+
+                        <div class="bg-purple-50 border border-purple-200 rounded-2xl p-6">
+
+                            <h3 class="text-2xl font-bold text-purple-700 mb-4">
+
+                                🤖 AI Medical Analysis
+
+                            </h3>
+
+                            <!-- DISEASE -->
+                            <div class="mb-5">
+
+                                <h4 class="font-semibold text-gray-800 mb-2">
+                                    Possible Disease
+                                </h4>
+
+                                <p class="text-gray-700">
+
+                                    ${ai.disease || "Not Available"}
+
+                                </p>
+
+                            </div>
+
+                            <!-- MEDICINES -->
+                            <div class="mb-5">
+
+                                <h4 class="font-semibold text-gray-800 mb-4">
+                                    Suggested Medicines
+                                </h4>
+
+                                <div class="space-y-5">
+
+                                    ${(ai.medicines || []).map((med) => `
+
+                                        <div class="bg-white rounded-xl p-5 border border-purple-100">
+
+                                            <h5 class="text-xl font-bold text-blue-700 mb-2">
+
+                                                ${med.name}
+
+                                            </h5>
+
+                                            <div class="mb-3">
+
+                                                <span class="font-semibold">
+                                                    Uses:
+                                                </span>
+
+                                                <p class="text-gray-600 mt-1">
+
+                                                    ${med.uses}
+
+                                                </p>
+
+                                            </div>
+
+                                            <div class="mb-3">
+
+                                                <span class="font-semibold text-red-600">
+                                                    Side Effects:
+                                                </span>
+
+                                                <p class="text-gray-600 mt-1">
+
+                                                    ${med.side_effects}
+
+                                                </p>
+
+                                            </div>
+
+                                            <div>
+
+                                                <span class="font-semibold text-yellow-700">
+                                                    Precautions:
+                                                </span>
+
+                                                <p class="text-gray-600 mt-1">
+
+                                                    ${med.precautions}
+
+                                                </p>
+
+                                            </div>
+
+                                        </div>
+
+                                    `).join("")}
+
+                                </div>
+
+                            </div>
+
+                            <!-- ADVICE -->
+                            <div>
+
+                                <h4 class="font-semibold text-gray-800 mb-2">
+                                    Medical Advice
+                                </h4>
+
+                                <p class="text-gray-700">
+
+                                    ${ai.advice || "Consult doctor before taking medicines."}
+
+                                </p>
+
+                            </div>
+
+                        </div>
+
+                    `;
+                }
+
+                // CLOSE CARD
+                html += `</div>`;
+
+                resultsDiv.innerHTML = html;
+
+            }
+
+            catch (err) {
+
+                console.error(err);
+
+                resultsDiv.innerHTML = `
+
+                    <div class="bg-red-50 border border-red-200 rounded-3xl p-8 text-center">
+
+                        <i class="fas fa-exclamation-circle text-5xl text-red-500 mb-4"></i>
+
+                        <h2 class="text-2xl font-bold text-red-600 mb-2">
+
+                            Failed to get recommendation
+
+                        </h2>
+
+                        <p class="text-red-500">
+
+                            ${err.message}
+
+                        </p>
+
+                    </div>
+
+                `;
+            }
+
+            finally {
+
+                btn.disabled = false;
+
+                btn.innerHTML = originalText;
+            }
+        }
+
+        // CTRL + ENTER
+        document
+            .getElementById("symptoms")
+            .addEventListener(
+                "keydown",
+                function (e) {
+
+                    if (
+                        (e.ctrlKey || e.metaKey)
+                        && e.key === "Enter"
+                    ) {
+
+                        getRecommendations();
+                    }
+                }
+            );
+
+    </script>
+
+</body>
+
+</html>
